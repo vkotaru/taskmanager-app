@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Manager</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono&display=swap" rel="stylesheet">
+</head>
+<body>
+    <h1>📋 Task Manager</h1>
+    <button id="openModal">➕ Add New Task</button>
+    <div id="taskModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2 id="modalTitle">Add New Task</h2>
+            <input type="text" id="taskInput" placeholder="Enter task">
+            <input type="text" id="tagsInput" placeholder="Enter tags (comma separated)">
+            <input type="date" id="dueDateInput" placeholder="Enter due date">
+            <select id="priorityInput">
+                <option value="p0">P0</option>
+                <option value="p1">P1</option>
+                <option value="p2">P2</option>
+                <option value="p3">P3</option>
+                <option value="p4">P4</option>
+                <option value="p5">P5</option>
+            </select>
+            <input type="text" id="categoryInput" placeholder="Enter category">
+            <button id="saveTask">Save Task</button>
+            <button id="deleteTask" style="display: none;">Delete Task</button>
+        </div>
+    </div>
+    
+    <div class="table-header">
+        <h4>🔵 Active Tasks</h4>
+        <span id="activeTaskCount"></span>
+    </div>
+    <table id="activeTaskTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Task</th>
+                <th>Due Date</th>
+                <th>Created Date</th>
+                <th>Priority <button id="sortAsc">⬆️</button> <button id="sortDesc">⬇️</button></th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <div class="table-header">
+        <h4>✅ Recently Completed Tasks (Last 5)</h4>
+        <span id="completedTaskCount"></span>
+    </div>
+    <table id="completedTaskTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Task</th>
+                <th>Completed At</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <div class="export-import-buttons">
+        <button id="exportCSV">Export Tasks as CSV</button>
+        <input type="file" id="importCSV" accept=".csv" style="display: none;">
+        <button id="importCSVBtn">Import Tasks from CSV</button>
+    </div>
+
+    <script>
+        const modal = document.getElementById("taskModal");
+        const btn = document.getElementById("openModal");
+        const span = document.getElementsByClassName("close")[0];
+        const saveTaskBtn = document.getElementById("saveTask");
+        const deleteTaskBtn = document.getElementById("deleteTask");
+        const modalTitle = document.getElementById("modalTitle");
+        const taskInput = document.getElementById("taskInput");
+        const dueDateInput = document.getElementById("dueDateInput");
+        const priorityInput = document.getElementById("priorityInput");
+        const categoryInput = document.getElementById("categoryInput");
+        const activeTaskTable = document.getElementById("activeTaskTable").getElementsByTagName('tbody')[0];
+        const completedTaskTable = document.getElementById("completedTaskTable").getElementsByTagName('tbody')[0];
+        const activeTaskCount = document.getElementById("activeTaskCount");
+        const completedTaskCount = document.getElementById("completedTaskCount");
+
+        let currentEditTaskId = null;
+        let isEditMode = false;
+
+        btn.onclick = () => {
+            isEditMode = false;
+            modalTitle.textContent = "Add New Task";
+            taskInput.value = '';
+            dueDateInput.value = '';
+            priorityInput.value = 'p0';
+            categoryInput.value = '';
+            deleteTaskBtn.style.display = "none";
+            modal.style.display = "block";
+        };
+
+        span.onclick = () => modal.style.display = "none";
+        window.onclick = (event) => {
+            if (event.target == modal) {
+                modal.style.display = "none";
+            }
+        };
+
+        saveTaskBtn.onclick = () => {
+            const task = taskInput.value;
+            const dueDate = dueDateInput.value;
+            const priority = priorityInput.value;
+            const category = categoryInput.value;
+            if (task) {
+                if (isEditMode) {
+                    fetch('/edit_task', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({id: currentEditTaskId, task: task, due_date: dueDate, priority: priority, category: category}),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            modal.style.display = "none";
+                            loadTasks();
+                        }
+                    });
+                } else {
+                    fetch('/add_task', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({task: task, due_date: dueDate, priority: priority, category: category}),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            modal.style.display = "none";
+                            loadTasks();
+                        }
+                    });
+                }
+            }
+        };
+
+        deleteTaskBtn.onclick = () => {
+            if (currentEditTaskId) {
+                fetch('/delete_task', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({id: currentEditTaskId}),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        modal.style.display = "none";
+                        loadTasks();
+                    }
+                });
+            }
+        };
+
+        document.getElementById("sortAsc").onclick = () => loadTasks('asc');
+        document.getElementById("sortDesc").onclick = () => loadTasks('desc');
+
+        function loadTasks(order = 'asc') {
+            fetch(`/get_tasks?order=${order}`)
+                .then(response => response.json())
+                .then(data => {
+                    activeTaskTable.innerHTML = '';
+                    completedTaskTable.innerHTML = '';
+
+                    data.active_tasks.forEach(task => {
+                        const row = activeTaskTable.insertRow();
+                        row.className = `priority-${task.priority.toLowerCase()}`;
+                        row.insertCell(0).textContent = task.id;
+                        row.insertCell(1).textContent = task.task;
+                        row.insertCell(2).textContent = task.due_date;
+                        row.insertCell(3).textContent = task.created_at;
+                        row.insertCell(4).textContent = task.priority;
+                        const actionCell = row.insertCell(5);
+                        const completeButton = document.createElement('button');
+                        completeButton.textContent = 'Complete';
+                        completeButton.onclick = () => completeTask(task.id);
+                        actionCell.appendChild(completeButton);
+
+                        const editButton = document.createElement('button');
+                        editButton.textContent = 'Edit';
+                        editButton.onclick = () => openEditModal(task);
+                        actionCell.appendChild(editButton);
+                    });
+
+                    data.completed_tasks.forEach(task => {
+                        const row = completedTaskTable.insertRow();
+                        row.insertCell(0).textContent = task.id;
+                        row.insertCell(1).textContent = task.task;
+                        row.insertCell(2).textContent = task.completed_at;
+                        const actionCell = row.insertCell(3);
+                        const undoButton = document.createElement('button');
+                        undoButton.textContent = 'Undo';
+                        undoButton.onclick = () => undoTask(task.id);
+                        actionCell.appendChild(undoButton);
+                    });
+
+                    activeTaskCount.textContent = `Total: ${data.active_tasks.length}`;
+                    completedTaskCount.textContent = `Showing: ${data.completed_tasks.length}`;
+                });
+        }
+
+        function completeTask(id) {
+            fetch('/complete_task', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({id: id}),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadTasks();
+                }
+            });
+        }
+
+        function undoTask(id) {
+            fetch('/undo_task', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({id: id}),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadTasks();
+                }
+            });
+        }
+
+        function openEditModal(task) {
+            isEditMode = true;
+            currentEditTaskId = task.id;
+            modalTitle.textContent = "Edit Task";
+            taskInput.value = task.task;
+            dueDateInput.value = task.due_date;
+            priorityInput.value = task.priority;
+            categoryInput.value = task.category;
+            deleteTaskBtn.style.display = "block";
+            modal.style.display = "block";
+        }
+
+        document.getElementById('exportCSV').addEventListener('click', exportTasksCSV);
+        document.getElementById('importCSVBtn').addEventListener('click', () => document.getElementById('importCSV').click());
+        document.getElementById('importCSV').addEventListener('change', importTasksCSV);
+
+        function exportTasksCSV() {
+            fetch('/export_tasks')
+                .then(response => response.blob())
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = 'tasks.csv';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                });
+        }
+
+        function importTasksCSV(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                fetch('/import_tasks', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Tasks imported successfully');
+                        loadTasks();
+                    } else {
+                        alert('Error importing tasks');
+                    }
+                });
+            }
+        }
+
+        loadTasks();
+    </script>
+</body>
+</html>
